@@ -132,9 +132,69 @@ function detectDuplicates(rows: RawRow[], anomalies: AnomalyCollector): void {
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectAmountIssues(_row: RawRow, _rowNumber: number, _anomalies: AnomalyCollector): void {
-  // feat: importer - handle amount_with_comma, float precision, zero amount, negative amount
+function detectAmountIssues(row: RawRow, rowNumber: number, anomalies: AnomalyCollector): void {
+  const raw = row.amount?.trim() ?? "";
+
+  // AMOUNT_WITH_COMMA — e.g. "1,500.00"
+  const hasComma = raw.includes(",");
+  const cleaned = raw.replace(/,/g, "");
+  const amount = parseFloat(cleaned);
+
+  if (hasComma) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "AMOUNT_WITH_COMMA",
+      description: `Amount "${raw}" contains commas — interpreted as ${cleaned}.`,
+      suggestedAction: `Store as ${cleaned}`,
+      requiresApproval: false,
+      autoResolved: true,
+    });
+  }
+
+  if (isNaN(amount)) return;
+
+  // ZERO_AMOUNT
+  if (amount === 0) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "ZERO_AMOUNT",
+      description: "Amount is zero — likely a data entry error.",
+      suggestedAction: "Skip row",
+      requiresApproval: true,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  // NEGATIVE_AMOUNT
+  if (amount < 0) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "NEGATIVE_AMOUNT",
+      description: `Amount is negative (${amount}) — may indicate a refund or data error.`,
+      suggestedAction: "Review and confirm intent",
+      requiresApproval: true,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  // FLOAT_PRECISION — more than 2 decimal places
+  const decimalPart = cleaned.split(".")[1];
+  if (decimalPart && decimalPart.length > 2) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "FLOAT_PRECISION",
+      description: `Amount "${cleaned}" has ${decimalPart.length} decimal places — will be rounded to ${amount.toFixed(2)}.`,
+      suggestedAction: `Round to ${amount.toFixed(2)}`,
+      requiresApproval: false,
+      autoResolved: true,
+    });
+  }
 }
 
 const USD_TO_INR_RATE = 85.21;
