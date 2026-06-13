@@ -399,7 +399,61 @@ function detectSplitIssues(
     }
   }
 
-  // feat: importer - member left, non-member in split, split_type mismatch (next commits)
+  // SPLIT_TYPE_MISMATCH — unknown split type
+  const VALID_SPLIT_TYPES = ["EQUAL", "PERCENTAGE", "EXACT", "SETTLEMENT"];
+  if (splitType && !VALID_SPLIT_TYPES.includes(splitType)) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "SPLIT_TYPE_MISMATCH",
+      description: `Unknown split_type "${row.split_type.trim()}" — expected one of: ${VALID_SPLIT_TYPES.join(", ")}.`,
+      suggestedAction: "Reject row — fix split_type before re-importing",
+      requiresApproval: false,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  // NON_MEMBER_IN_SPLIT and MEMBER_LEFT — check each name in split_with
+  const splitWith = row.split_with?.trim();
+  if (!splitWith || splitWith.toLowerCase() === "nan") return;
+
+  const names = splitWith.split(",").map((n) => n.trim()).filter(Boolean);
+
+  for (const name of names) {
+    const { matched, ambiguous } = fuzzyMatchMember(name, _members);
+
+    if (!matched) {
+      anomalies.push({
+        rowNumber,
+        rawData: row as unknown as Record<string, string>,
+        anomalyType: "NON_MEMBER_IN_SPLIT",
+        description: ambiguous
+          ? `"${name}" in split_with matches multiple members — cannot auto-resolve.`
+          : `"${name}" in split_with does not match any known group member.`,
+        suggestedAction: "Map to a known member during review",
+        requiresApproval: true,
+        autoResolved: false,
+      });
+      continue;
+    }
+
+    if (matched.left_at) {
+      const expenseDate = new Date(row.date?.trim());
+      const leftDate = new Date(matched.left_at);
+      if (!isNaN(expenseDate.getTime()) && expenseDate > leftDate) {
+        anomalies.push({
+          rowNumber,
+          rawData: row as unknown as Record<string, string>,
+          anomalyType: "MEMBER_LEFT",
+          description: `"${matched.name}" left the group on ${matched.left_at} but appears in a split dated ${row.date.trim()}.`,
+          suggestedAction: "Review — member was not in the group at the time of this expense",
+          requiresApproval: true,
+          autoResolved: false,
+        });
+      }
+    }
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
