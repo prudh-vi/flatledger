@@ -456,9 +456,56 @@ function detectSplitIssues(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectDateIssues(_row: RawRow, _rowNumber: number, _anomalies: AnomalyCollector): void {
-  // feat: importer - ambiguous date detection
+function detectDateIssues(row: RawRow, rowNumber: number, anomalies: AnomalyCollector): void {
+  const raw = row.date?.trim() ?? "";
+  if (!raw || raw.toLowerCase() === "nan") return;
+
+  // ISO format (YYYY-MM-DD) is unambiguous — skip
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return;
+
+  // Detect separator and split
+  const sep = raw.includes("/") ? "/" : raw.includes("-") ? "-" : raw.includes(".") ? "." : null;
+  if (!sep) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "AMBIGUOUS_DATE",
+      description: `Date "${raw}" could not be parsed — unrecognized format.`,
+      suggestedAction: "Reject row — provide date in YYYY-MM-DD format",
+      requiresApproval: false,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  const parts = raw.split(sep);
+  if (parts.length !== 3) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "AMBIGUOUS_DATE",
+      description: `Date "${raw}" could not be parsed — expected 3 parts separated by "${sep}".`,
+      suggestedAction: "Reject row — provide date in YYYY-MM-DD format",
+      requiresApproval: false,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  const [a, b] = parts.map(Number);
+
+  // If both first and second parts are ≤ 12, could be MM/DD or DD/MM
+  if (!isNaN(a) && !isNaN(b) && a <= 12 && b <= 12) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "AMBIGUOUS_DATE",
+      description: `Date "${raw}" is ambiguous — "${a}" and "${b}" could be either MM${sep}DD or DD${sep}MM.`,
+      suggestedAction: "Clarify date format or re-enter as YYYY-MM-DD",
+      requiresApproval: true,
+      autoResolved: false,
+    });
+  }
 }
 
 // ── Phase 1 Entry Point ──────────────────────────────────────
