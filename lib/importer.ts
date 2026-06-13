@@ -137,9 +137,41 @@ function detectAmountIssues(_row: RawRow, _rowNumber: number, _anomalies: Anomal
   // feat: importer - handle amount_with_comma, float precision, zero amount, negative amount
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectCurrencyIssues(_row: RawRow, _rowNumber: number, _anomalies: AnomalyCollector): void {
-  // feat: importer - handle USD currency conversion and missing currency
+const USD_TO_INR_RATE = 85.21;
+
+function detectCurrencyIssues(row: RawRow, rowNumber: number, anomalies: AnomalyCollector): void {
+  const currency = row.currency?.trim().toUpperCase();
+
+  // MISSING_CURRENCY — default to INR
+  if (!currency || currency === "NAN" || currency === "") {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "MISSING_CURRENCY",
+      description: "No currency specified — defaulting to INR.",
+      suggestedAction: "Treat as INR",
+      requiresApproval: false,
+      autoResolved: true,
+    });
+    return;
+  }
+
+  // USD_CURRENCY — convert to INR at current rate
+  if (currency === "USD") {
+    const rawAmount = parseFloat(row.amount.replace(/,/g, ""));
+    if (!isNaN(rawAmount)) {
+      const convertedInr = rawAmount * USD_TO_INR_RATE;
+      anomalies.push({
+        rowNumber,
+        rawData: row as unknown as Record<string, string>,
+        anomalyType: "USD_CURRENCY",
+        description: `Amount $${rawAmount} USD converted to ₹${convertedInr.toFixed(2)} INR at rate ${USD_TO_INR_RATE}.`,
+        suggestedAction: `Store as ₹${convertedInr.toFixed(2)} INR (rate: ${USD_TO_INR_RATE})`,
+        requiresApproval: false,
+        autoResolved: true,
+      });
+    }
+  }
 }
 
 function toTitleCase(name: string): string {
