@@ -322,9 +322,28 @@ function detectNameIssues(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectSettlements(_row: RawRow, _rowNumber: number, _anomalies: AnomalyCollector): void {
-  // feat: importer - flag settlements vs expenses
+const SETTLEMENT_KEYWORDS = ["settlement", "settle", "paid back", "payback", "reimburs", "repay"];
+
+function detectSettlements(row: RawRow, rowNumber: number, anomalies: AnomalyCollector): void {
+  const splitType = row.split_type?.trim().toUpperCase();
+  const description = row.description?.trim().toLowerCase() ?? "";
+
+  const isSettlementSplitType = splitType === "SETTLEMENT";
+  const hasSettlementKeyword = SETTLEMENT_KEYWORDS.some((kw) => description.includes(kw));
+
+  if (isSettlementSplitType || hasSettlementKeyword) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "SETTLEMENT_AS_EXPENSE",
+      description: isSettlementSplitType
+        ? `split_type is "SETTLEMENT" — this row should be recorded as a settlement, not an expense.`
+        : `Description "${row.description.trim()}" suggests a settlement payment imported as an expense.`,
+      suggestedAction: "Convert to settlement record",
+      requiresApproval: true,
+      autoResolved: false,
+    });
+  }
 }
 
 function parsePercentages(splitDetails: string): number[] {
