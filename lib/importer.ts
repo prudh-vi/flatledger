@@ -267,9 +267,60 @@ function detectSettlements(_row: RawRow, _rowNumber: number, _anomalies: Anomaly
   // feat: importer - flag settlements vs expenses
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectSplitIssues(_row: RawRow, _rowNumber: number, _members: KnownMembers, _anomalies: AnomalyCollector): void {
-  // feat: importer - percentage not 100, member left, non-member in split, split_type mismatch
+function parsePercentages(splitDetails: string): number[] {
+  // Handles: "Rohan:40,Priya:35,Aisha:25" | "40,35,25" | "40%,35%,25%"
+  return splitDetails
+    .split(",")
+    .map((part) => {
+      const match = part.trim().match(/[\d.]+/);
+      return match ? parseFloat(match[0]) : NaN;
+    })
+    .filter((n) => !isNaN(n));
+}
+
+function detectSplitIssues(
+  row: RawRow,
+  rowNumber: number,
+  _members: KnownMembers,
+  anomalies: AnomalyCollector
+): void {
+  const splitType = row.split_type?.trim().toUpperCase();
+  const splitDetails = row.split_details?.trim();
+
+  // PERCENTAGE_NOT_100
+  if (splitType === "PERCENTAGE" && splitDetails) {
+    const percentages = parsePercentages(splitDetails);
+
+    if (percentages.length === 0) {
+      anomalies.push({
+        rowNumber,
+        rawData: row as unknown as Record<string, string>,
+        anomalyType: "PERCENTAGE_NOT_100",
+        description: "split_type is PERCENTAGE but no valid percentages found in split_details.",
+        suggestedAction: "Reject row — fix split_details before re-importing",
+        requiresApproval: false,
+        autoResolved: false,
+      });
+      return;
+    }
+
+    const sum = percentages.reduce((a, b) => a + b, 0);
+    const rounded = Math.round(sum * 100) / 100;
+
+    if (rounded !== 100) {
+      anomalies.push({
+        rowNumber,
+        rawData: row as unknown as Record<string, string>,
+        anomalyType: "PERCENTAGE_NOT_100",
+        description: `Percentages sum to ${rounded}% instead of 100% (values: ${percentages.join(", ")}).`,
+        suggestedAction: "Reject row — percentages must sum to exactly 100%",
+        requiresApproval: false,
+        autoResolved: false,
+      });
+    }
+  }
+
+  // feat: importer - member left, non-member in split, split_type mismatch (next commits)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
