@@ -565,6 +565,7 @@ export async function runImportPhase1(
       status: "PENDING",
       total_rows: rows.length,
       anomalies_count: anomalies.length,
+      raw_rows: rows,
     })
     .select("id")
     .single();
@@ -599,4 +600,353 @@ export async function runImportPhase1(
     anomalies,
     readyToImport: rows.length - unresolvable.length,
   };
+}
+
+// ── Phase 2 Types ────────────────────────────────────────────
+
+export interface ConfirmImportResult {
+  imported: number;
+  skipped: number;
+  settlements: number;
+  rejectedByUser: number;
+  errors: Array<{ rowNumber: number; reason: string }>;
+}
+
+// ── Phase 2 Helpers ──────────────────────────────────────────
+
+const UNRESOLVABLE_ANOMALY_TYPES: AnomalyType[] = ["MISSING_PAID_BY", "PERCENTAGE_NOT_100"];
+
+function normalizeDate(raw: string): string | null {
+  if (!raw || raw.toLowerCase() === "nan") return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const sep = raw.includes("/") ? "/" : raw.includes("-") ? "-" : raw.includes(".") ? "." : null;
+  if (!sep) return null;
+
+  const parts = raw.split(sep);
+  if (parts.length !== 3) return null;
+
+  // YYYY-sep-MM-sep-DD with non-hyphen separator
+  if (parts[0].length === 4) {
+    return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+  }
+
+  // DD/MM/YYYY — default interpretation for ambiguous dates (Indian locale)
+  const [dd, mm, yyyy] = parts;
+  if (Number(dd) > 31 || Number(mm) > 12) return null;
+  return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+}
+
+function mapSplitType(raw: string): "EQUAL" | "UNEQUAL" | "PERCENTAGE" | "SHARE" {
+  switch (raw) {
+    case "PERCENTAGE": return "PERCENTAGE";
+    case "EXACT":      return "UNEQUAL";
+    case "SHARE":      return "SHARE";
+    default:           return "EQUAL";
+  }
+}
+
+function computeSplits(
+  row: RawRow,
+  totalPaise: number,
+  members: KnownMembers,
+  splitType: "EQUAL" | "UNEQUAL" | "PERCENTAGE" | "SHARE",
+  anomalyTypes: Set<AnomalyType>
+): Array<{ userId: string; amountPaise: number }> {
+  const splitWithRaw = row.split_with?.trim() ?? "";
+  if (!splitWithRaw || splitWithRaw.toLowerCase() === "nan") return [];
+
+  const resolvedMembers = splitWithRaw
+    .split(",")
+    .map((n) => fuzzyMatchMember(n.trim(), members).matched)
+    .filter((m): m is KnownMembers[0] => m !== null);
+
+  if (resolvedMembers.length === 0) return [];
+
+  if (splitType === "EQUAL") {
+    const base = Math.floor(totalPaise / resolvedMembers.length);
+    const remainder = totalPaise - base * resolvedMembers.length;
+    return resolvedMembers.map((m, i) => ({
+      userId: m.id,
+      amountPaise: i === 0 ? base + remainder : base,
+    }));
+  }
+
+  const numbers = parsePercentages(row.split_details?.trim() ?? "");
+
+  if (splitType === "PERCENTAGE") {
+    if (numbers.length !== resolvedMembers.length) return [];
+    return resolvedMembers.map((m, i) => ({
+      userId: m.id,
+      amountPaise: Math.round(totalPaise * (numbers[i] / 100)),
+    }));
+  }
+
+  if (splitType === "UNEQUAL") {
+    if (numbers.length !== resolvedMembers.length) return [];
+    const conversionFactor = anomalyTypes.has("USD_CURRENCY") ? USD_TO_INR_RATE : 1;
+    return resolvedMembers.map((m, i) => ({
+      userId: m.id,
+      amountPaise: Math.round(numbers[i] * conversionFactor * 100),
+    }));
+  }
+
+  // SHARE — each number is a share count; distribute proportionally
+  if (numbers.length === resolvedMembers.length) {
+    const totalShares = numbers.reduce((a, b) => a + b, 0);
+    if (totalShares > 0) {
+      return resolvedMembers.map((m, i) => ({
+        userId: m.id,
+        amountPaise: Math.round(totalPaise * (numbers[i] / totalShares)),
+      }));
+    }
+  }
+
+  // Fallback: equal
+  const base = Math.floor(totalPaise / resolvedMembers.length);
+  const remainder = totalPaise - base * resolvedMembers.length;
+  return resolvedMembers.map((m, i) => ({
+    userId: m.id,
+    amountPaise: i === 0 ? base + remainder : base,
+  }));
+}
+
+// ── Phase 2 Entry Point ──────────────────────────────────────
+
+export async function confirmImport(
+  sessionId: string,
+  approvals: Record<number, boolean>,
+  groupId: string,
+  userId: string,
+  supabase: SupabaseClient
+): Promise<ConfirmImportResult> {
+  // 1. Load session + raw rows
+  const { data: session, error: sessionError } = await supabase
+    .from("import_sessions")
+    .select("id, total_rows, status, raw_rows")
+    .eq("id", sessionId)
+    .single();
+
+  if (sessionError || !session) throw new Error(`Session not found: ${sessionError?.message}`);
+  if (session.status === "COMMITTED") throw new Error("Import already committed.");
+
+  const rawRows: RawRow[] = session.raw_rows ?? [];
+
+  // 2. Load anomalies and apply user approvals in two batched updates
+  const { data: dbAnomalies } = await supabase
+    .from("import_anomalies")
+    .select("id, row_number, anomaly_type, requires_approval, approved")
+    .eq("import_session_id", sessionId);
+
+  const rowsToApprove = Object.entries(approvals).filter(([, v]) => v).map(([k]) => Number(k));
+  const rowsToReject  = Object.entries(approvals).filter(([, v]) => !v).map(([k]) => Number(k));
+
+  if (rowsToApprove.length > 0) {
+    await supabase
+      .from("import_anomalies")
+      .update({ approved: true })
+      .eq("import_session_id", sessionId)
+      .in("row_number", rowsToApprove)
+      .eq("requires_approval", true)
+      .is("approved", null);
+  }
+  if (rowsToReject.length > 0) {
+    await supabase
+      .from("import_anomalies")
+      .update({ approved: false })
+      .eq("import_session_id", sessionId)
+      .in("row_number", rowsToReject)
+      .eq("requires_approval", true)
+      .is("approved", null);
+  }
+
+  // Build in-memory anomaly map with approvals applied
+  const anomalyMap = new Map<number, Array<{
+    anomaly_type: string;
+    requires_approval: boolean;
+    approved: boolean | null;
+  }>>();
+
+  for (const a of dbAnomalies ?? []) {
+    const effectiveApproved =
+      a.requires_approval && a.approved === null
+        ? (approvals[a.row_number] ?? null)
+        : a.approved;
+    const list = anomalyMap.get(a.row_number) ?? [];
+    list.push({ ...a, approved: effectiveApproved });
+    anomalyMap.set(a.row_number, list);
+  }
+
+  // 3. Load group members
+  const { data: members } = await supabase
+    .from("group_memberships")
+    .select("user_id, joined_at, left_at, profiles(name)")
+    .eq("group_id", groupId);
+
+  const knownMembers: KnownMembers = (members ?? []).map((m: any) => ({
+    id: m.user_id,
+    name: m.profiles?.name ?? "",
+    joined_at: m.joined_at,
+    left_at: m.left_at,
+  }));
+
+  // 4. Process each row
+  const result: ConfirmImportResult = {
+    imported: 0,
+    skipped: 0,
+    settlements: 0,
+    rejectedByUser: 0,
+    errors: [],
+  };
+
+  for (let i = 0; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    const rowNumber = i + 1;
+    const rowAnomalies = anomalyMap.get(rowNumber) ?? [];
+    const anomalyTypes = new Set(rowAnomalies.map((a) => a.anomaly_type as AnomalyType));
+
+    // Always skip unresolvable rows
+    if (rowAnomalies.some((a) => UNRESOLVABLE_ANOMALY_TYPES.includes(a.anomaly_type as AnomalyType))) {
+      result.skipped++;
+      continue;
+    }
+
+    // Check requires-approval anomalies
+    const approvalGated = rowAnomalies.filter((a) => a.requires_approval);
+    if (approvalGated.some((a) => a.approved === false)) {
+      result.rejectedByUser++;
+      continue;
+    }
+    if (approvalGated.some((a) => a.approved === null)) {
+      result.skipped++;
+      continue;
+    }
+
+    // Row is cleared — apply fixes and insert
+    try {
+      // Amount: strip commas, convert USD → INR, to paise
+      const cleanedAmount = (row.amount?.trim() ?? "0").replace(/,/g, "");
+      let amountFloat = parseFloat(cleanedAmount);
+      if (anomalyTypes.has("USD_CURRENCY")) amountFloat *= USD_TO_INR_RATE;
+      const amountPaise = Math.round(amountFloat * 100);
+
+      // paid_by → member ID
+      const { matched: paidByMember } = fuzzyMatchMember(row.paid_by?.trim() ?? "", knownMembers);
+      if (!paidByMember) {
+        result.errors.push({ rowNumber, reason: `Cannot resolve paid_by "${row.paid_by}" to a member.` });
+        result.skipped++;
+        continue;
+      }
+
+      // Date
+      const expenseDate = normalizeDate(row.date?.trim() ?? "");
+      if (!expenseDate) {
+        result.errors.push({ rowNumber, reason: `Cannot parse date "${row.date}".` });
+        result.skipped++;
+        continue;
+      }
+
+      // Settlement rows → settlements table
+      const isSettlement =
+        anomalyTypes.has("SETTLEMENT_AS_EXPENSE") ||
+        row.split_type?.trim().toUpperCase() === "SETTLEMENT";
+
+      if (isSettlement) {
+        const toNames = (row.split_with?.trim() ?? "")
+          .split(",")
+          .map((n) => n.trim())
+          .filter(Boolean);
+
+        if (toNames.length !== 1) {
+          result.errors.push({ rowNumber, reason: "Settlement requires exactly one recipient in split_with." });
+          result.skipped++;
+          continue;
+        }
+
+        const { matched: toMember } = fuzzyMatchMember(toNames[0], knownMembers);
+        if (!toMember) {
+          result.errors.push({ rowNumber, reason: `Cannot resolve settlement recipient "${toNames[0]}" to a member.` });
+          result.skipped++;
+          continue;
+        }
+
+        const { error: settleError } = await supabase.from("settlements").insert({
+          group_id: groupId,
+          from_user_id: paidByMember.id,
+          to_user_id: toMember.id,
+          amount_paise: Math.abs(amountPaise),
+          settled_at: new Date(expenseDate).toISOString(),
+        });
+
+        if (settleError) {
+          result.errors.push({ rowNumber, reason: `Settlement insert failed: ${settleError.message}` });
+          result.skipped++;
+          continue;
+        }
+
+        result.imported++;
+        result.settlements++;
+        continue;
+      }
+
+      // Regular expense → expenses + expense_splits
+      const splitType = mapSplitType(row.split_type?.trim().toUpperCase() ?? "");
+      const splits = computeSplits(row, amountPaise, knownMembers, splitType, anomalyTypes);
+
+      if (splits.length === 0) {
+        result.errors.push({ rowNumber, reason: "Could not compute splits — no valid members in split_with." });
+        result.skipped++;
+        continue;
+      }
+
+      const { data: expense, error: expenseError } = await supabase
+        .from("expenses")
+        .insert({
+          group_id: groupId,
+          description: row.description?.trim(),
+          paid_by_user_id: paidByMember.id,
+          total_amount_paise: amountPaise,
+          currency: "INR",
+          split_type: splitType,
+          expense_date: expenseDate,
+          is_settlement: false,
+        })
+        .select("id")
+        .single();
+
+      if (expenseError || !expense) {
+        result.errors.push({ rowNumber, reason: `Expense insert failed: ${expenseError?.message}` });
+        result.skipped++;
+        continue;
+      }
+
+      const { error: splitsError } = await supabase.from("expense_splits").insert(
+        splits.map((s) => ({
+          expense_id: expense.id,
+          user_id: s.userId,
+          amount_paise: s.amountPaise,
+        }))
+      );
+
+      if (splitsError) {
+        result.errors.push({ rowNumber, reason: `Splits insert failed: ${splitsError.message}` });
+        result.skipped++;
+        continue;
+      }
+
+      result.imported++;
+    } catch (err: any) {
+      result.errors.push({ rowNumber, reason: err?.message ?? "Unknown error" });
+      result.skipped++;
+    }
+  }
+
+  // 5. Mark session committed
+  await supabase
+    .from("import_sessions")
+    .update({ status: "COMMITTED" })
+    .eq("id", sessionId);
+
+  return result;
 }
