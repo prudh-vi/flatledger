@@ -105,9 +105,31 @@ function validateHeaders(rows: RawRow[]): string[] {
 type AnomalyCollector = Anomaly[];
 type KnownMembers = Array<{ id: string; name: string; left_at: string | null; joined_at: string }>;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectDuplicates(_rows: RawRow[], _anomalies: AnomalyCollector): void {
-  // feat: importer - detect duplicate rows
+function detectDuplicates(rows: RawRow[], anomalies: AnomalyCollector): void {
+  const seen = new Map<string, number>(); // key → first rowNumber
+
+  rows.forEach((row, idx) => {
+    const rowNumber = idx + 1;
+    const key = [
+      row.date.trim().toLowerCase(),
+      row.description.trim().toLowerCase(),
+      row.amount.trim().replace(/,/g, ""),
+    ].join("|");
+
+    if (seen.has(key)) {
+      anomalies.push({
+        rowNumber,
+        rawData: row as unknown as Record<string, string>,
+        anomalyType: "DUPLICATE",
+        description: `Duplicate of row ${seen.get(key)}: same date, description, and amount (case-insensitive).`,
+        suggestedAction: "Skip this row",
+        requiresApproval: true,
+        autoResolved: false,
+      });
+    } else {
+      seen.set(key, rowNumber);
+    }
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
