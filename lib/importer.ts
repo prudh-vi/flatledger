@@ -142,9 +142,92 @@ function detectCurrencyIssues(_row: RawRow, _rowNumber: number, _anomalies: Anom
   // feat: importer - handle USD currency conversion and missing currency
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function detectNameIssues(_row: RawRow, _rowNumber: number, _members: KnownMembers, _anomalies: AnomalyCollector): void {
-  // feat: importer - normalize paid_by names and detect ambiguous names
+function toTitleCase(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function fuzzyMatchMember(
+  raw: string,
+  members: KnownMembers
+): { matched: KnownMembers[0] | null; ambiguous: boolean } {
+  const normalized = toTitleCase(raw);
+
+  // 1. Exact match after title-casing
+  const exact = members.find((m) => m.name === normalized);
+  if (exact) return { matched: exact, ambiguous: false };
+
+  // 2. Partial match: member name starts with the normalized input
+  const partials = members.filter((m) =>
+    m.name.toLowerCase().startsWith(normalized.toLowerCase())
+  );
+  if (partials.length === 1) return { matched: partials[0], ambiguous: false };
+  if (partials.length > 1) return { matched: null, ambiguous: true };
+
+  // 3. Contains match
+  const contains = members.filter((m) =>
+    m.name.toLowerCase().includes(normalized.toLowerCase())
+  );
+  if (contains.length === 1) return { matched: contains[0], ambiguous: false };
+
+  return { matched: null, ambiguous: contains.length > 1 };
+}
+
+function detectNameIssues(
+  row: RawRow,
+  rowNumber: number,
+  members: KnownMembers,
+  anomalies: AnomalyCollector
+): void {
+  const raw = row.paid_by?.trim() ?? "";
+
+  // MISSING_PAID_BY
+  if (!raw || raw.toLowerCase() === "nan") {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "MISSING_PAID_BY",
+      description: "paid_by is empty or NaN — cannot determine who paid.",
+      suggestedAction: "Skip row (unresolvable)",
+      requiresApproval: false,
+      autoResolved: false,
+    });
+    return;
+  }
+
+  const normalized = toTitleCase(raw);
+  const { matched, ambiguous } = fuzzyMatchMember(raw, members);
+
+  // NAME_NORMALIZATION — name changed but uniquely matched
+  if (matched && matched.name !== raw) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "NAME_NORMALIZATION",
+      description: `"${raw}" normalized to "${matched.name}".`,
+      suggestedAction: `Use "${matched.name}"`,
+      requiresApproval: false,
+      autoResolved: true,
+    });
+    return;
+  }
+
+  // AMBIGUOUS_NAME — couldn't resolve to a single member
+  if (!matched) {
+    anomalies.push({
+      rowNumber,
+      rawData: row as unknown as Record<string, string>,
+      anomalyType: "AMBIGUOUS_NAME",
+      description: ambiguous
+        ? `"${normalized}" matches multiple members — cannot auto-resolve.`
+        : `"${normalized}" does not match any known group member.`,
+      suggestedAction: "Map to a known member during review",
+      requiresApproval: true,
+      autoResolved: false,
+    });
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
