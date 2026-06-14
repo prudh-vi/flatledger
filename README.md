@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FlatLedger
 
-## Getting Started
+A shared expense tracker for flatmates. Tracks who paid what, splits bills across group members, handles mid-tenancy join/leave, and imports messy CSV exports with a deliberate anomaly-review flow.
 
-First, run the development server:
+Built with Next.js 16, Supabase, and Tailwind CSS v4.
+
+---
+
+## Stack
+
+- **Frontend/API**: Next.js 16.2.9 (App Router, Server Actions)
+- **Database**: Supabase (PostgreSQL + Auth + RLS)
+- **Styling**: Tailwind CSS v4
+- **CSV parsing**: PapaParse
+- **AI used**: Claude (Anthropic) — see `AI_USAGE.md`
+
+---
+
+## Local Setup
+
+### Prerequisites
+
+- Node.js 20+ or Bun
+- A Supabase project (free tier works)
+
+### 1. Clone and install
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+git clone https://github.com/prudh-vi/flatledger.git
+cd flatledger
+bun install        # or: npm install
+```
+
+### 2. Environment variables
+
+Create `.env.local` at the project root:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Both values are in your Supabase project under **Settings → API**.
+
+### 3. Run migrations
+
+Open the Supabase SQL editor and run the three migration files in order:
+
+```
+supabase/migrations/001_groups_and_memberships.sql
+supabase/migrations/002_expenses_splits_settlements.sql
+supabase/migrations/003_import_raw_rows.sql
+```
+
+Each file is self-contained with `create table if not exists` — safe to re-run.
+
+### 4. Start the dev server
+
+```bash
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Usage
 
-## Learn More
+1. **Register** at `/register` — name, email, password
+2. **Create a group** — Dashboard → New Group, invite flatmates by email (they must have accounts first)
+3. **Add expenses** — from the group page, click Add Expense; choose split type (Equal / Unequal / Percentage / Share)
+4. **Import CSV** — click Import CSV on the group page; upload the file, review anomalies, confirm
+5. **Settle up** — click Settle Up to see the minimum set of transfers needed to clear all debts; record payments as they happen
 
-To learn more about Next.js, take a look at the following resources:
+### CSV format
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```csv
+date,description,paid_by,amount,currency,split_type,split_with,split_details,notes
+2026-06-01,Airbnb,Rohan,12000,INR,EQUAL,"Rohan,Priya,Aisha",,
+2026-06-02,Dinner,Priya,3500,INR,PERCENTAGE,"Rohan,Priya,Aisha","40,35,25",
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Supported split types in CSV: `EQUAL`, `PERCENTAGE`, `EXACT` (stored as unequal), `SHARE`, `SETTLEMENT`.
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Deploy to Vercel:
+
+```bash
+bunx vercel --prod
+```
+
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel project settings before deploying.

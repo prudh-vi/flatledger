@@ -400,7 +400,7 @@ function detectSplitIssues(
   }
 
   // SPLIT_TYPE_MISMATCH — unknown split type
-  const VALID_SPLIT_TYPES = ["EQUAL", "PERCENTAGE", "EXACT", "SETTLEMENT"];
+  const VALID_SPLIT_TYPES = ["EQUAL", "PERCENTAGE", "EXACT", "SHARE", "SETTLEMENT"];
   if (splitType && !VALID_SPLIT_TYPES.includes(splitType)) {
     anomalies.push({
       rowNumber,
