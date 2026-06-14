@@ -25,7 +25,7 @@ export default async function NewExpensePage({ params }: { params: Promise<{ id:
   const members = (membershipsResult.data ?? [])
     .map((m) => ({
       id: m.user_id,
-      name: (m.profiles as { name: string } | null)?.name ?? "Unknown",
+      name: (m.profiles as unknown as { name: string } | null)?.name ?? "Unknown",
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 

@@ -30,7 +30,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
   // name lookup: userId → name
   const nameMap = new Map<string, string>()
   for (const m of memberships) {
-    const p = m.profiles as { name: string; email: string } | null
+    const p = m.profiles as unknown as { name: string; email: string } | null
     nameMap.set(m.user_id, p?.name ?? "Unknown")
   }
 
@@ -71,7 +71,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
           <SectionHeader label="Members" count={memberships.length} />
           <div className="flex flex-col gap-3">
             {memberships.map((m) => {
-              const p = m.profiles as { name: string; email: string } | null
+              const p = m.profiles as unknown as { name: string; email: string } | null
               const isMe = m.user_id === user.id
               const left = !!m.left_at
               return (

@@ -17,7 +17,9 @@ export default async function DashboardPage() {
     .eq("user_id", user.id)
     .is("left_at", null)
 
-  const groups = (memberships ?? []).map((m) => m.groups as { id: string; name: string })
+  const groups = (memberships ?? [])
+    .map((m) => m.groups as unknown as { id: string; name: string } | null)
+    .filter((g): g is { id: string; name: string } => g !== null)
 
   // Balances + member counts in parallel per group
   const groupData = await Promise.all(

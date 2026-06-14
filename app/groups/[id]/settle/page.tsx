@@ -23,7 +23,7 @@ export default async function SettlePage({ params }: { params: Promise<{ id: str
 
   const nameMap = new Map<string, string>()
   for (const m of membershipsResult.data ?? []) {
-    const p = m.profiles as { name: string } | null
+    const p = m.profiles as unknown as { name: string } | null
     nameMap.set(m.user_id, p?.name ?? "Unknown")
   }
 
