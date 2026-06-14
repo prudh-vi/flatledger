@@ -158,9 +158,15 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
         </Link>
         <Link
           href={`/groups/${id}/settle`}
-          className="flex items-center gap-2 rounded-2xl border-2 border-brutal bg-lime px-10 py-4 text-lg font-black uppercase tracking-widest shadow-[4px_4px_0px_#000] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[6px_6px_0px_#000]"
+          className="flex items-center gap-2 rounded-2xl border-2 border-brutal bg-white px-8 py-4 text-sm font-black uppercase tracking-widest shadow-[4px_4px_0px_#000] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[6px_6px_0px_#000]"
         >
           Settle Up
+        </Link>
+        <Link
+          href={`/groups/${id}/expenses/new`}
+          className="flex items-center gap-3 rounded-2xl border-2 border-brutal bg-lime px-10 py-4 text-lg font-black uppercase tracking-widest shadow-[4px_4px_0px_#000] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[6px_6px_0px_#000]"
+        >
+          <span className="text-xl">+</span> Add Expense
         </Link>
       </div>
 
