@@ -10,6 +10,14 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
+  // User profile name
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("name")
+    .eq("id", user.id)
+    .single()
+  const userName = profile?.name ?? user.email?.split("@")[0] ?? "there"
+
   // Current group memberships
   const { data: memberships } = await supabase
     .from("group_memberships")
@@ -88,8 +96,9 @@ export default async function DashboardPage() {
           <div>
             <p className="mb-1 text-xs font-bold uppercase tracking-widest opacity-60">FLATLEDGER · V1</p>
             <h1 className="text-5xl font-black leading-none tracking-tight">
-              Split expenses.<br />No drama.
+              Hey, {userName}.
             </h1>
+            <p className="mt-2 text-sm font-bold opacity-60 uppercase tracking-widest">Split expenses. No drama.</p>
           </div>
           <div className="flex flex-col gap-2 items-end">
             <div className="flex items-center gap-2 rounded-full border-2 border-brutal bg-white px-4 py-2 shadow-[3px_3px_0px_#000]">
@@ -102,6 +111,19 @@ export default async function DashboardPage() {
               <span className="text-xs font-bold uppercase tracking-widest opacity-50">Groups</span>
               <span className="text-sm font-black">{groups.length} active</span>
             </div>
+            <form action="/auth/signout" method="post">
+              <button
+                formAction={async () => {
+                  "use server"
+                  const supabase = await createClient()
+                  await supabase.auth.signOut()
+                  redirect("/login")
+                }}
+                className="flex items-center gap-1.5 rounded-full border-2 border-brutal bg-white px-4 py-2 text-xs font-black uppercase tracking-widest shadow-[3px_3px_0px_#000] hover:bg-cream transition-colors"
+              >
+                Sign out
+              </button>
+            </form>
           </div>
         </div>
       </BrutalCard>
