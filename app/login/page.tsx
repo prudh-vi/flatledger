@@ -58,6 +58,20 @@ export default function LoginPage() {
           <p className="mt-2 text-sm font-bold text-black/40 uppercase tracking-widest">Split expenses. No drama.</p>
         </div>
 
+        {/* Demo credentials */}
+        <div className="mb-4 rounded-2xl border-2 border-brutal bg-yellow-100 p-4 shadow-[4px_4px_0px_#000]">
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-black/60">Evaluator Demo Account</p>
+          <div className="mb-1 font-mono text-sm font-bold">aisha@flatledger.com</div>
+          <div className="mb-3 font-mono text-sm font-bold">password123</div>
+          <button
+            type="button"
+            onClick={() => { setEmail("aisha@flatledger.com"); setPassword("password123") }}
+            className="rounded-lg border-2 border-brutal bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest shadow-[2px_2px_0px_#000] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[3px_3px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0px_#000]"
+          >
+            Fill credentials →
+          </button>
+        </div>
+
         {/* Card */}
         <div className="rounded-2xl border-2 border-brutal bg-white p-8 shadow-[6px_6px_0px_#000]">
 
